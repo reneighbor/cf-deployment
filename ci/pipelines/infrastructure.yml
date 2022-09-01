@@ -1,0 +1,193 @@
+groups:
+- jobs:
+  - add-claimed-lock-windows
+  - setup-infrastructure-windows
+  - update-infrastructure-windows
+  - destroy-infrastructure-windows
+  - remove-claimed-lock-windows
+  name: windows-cedric
+jobs:
+- name: add-claimed-lock-windows
+  plan:
+  - get: runtime-ci
+  - file: runtime-ci/tasks/prepare-to-modify-pool-resource/task.yml
+    output_mapping:
+      pool-resource: windows-pool
+    params:
+      NAME: cedric
+    task: prepare-to-modify-pool-resource
+  - params:
+      add_claimed: windows-pool
+    put: windows-pool
+  public: true
+  serial: true
+- name: setup-infrastructure-windows
+  plan:
+  - get: windows-pool
+    passed: [add-claimed-lock-windows]
+    trigger: true
+  - in_parallel:
+      steps:
+      - get: relint-envs
+      - get: cf-deployment-concourse-tasks
+  - ensure:
+      params:
+        rebase: true
+        repository: updated-bbl-state
+      put: relint-envs
+    file: cf-deployment-concourse-tasks/bbl-up/task.yml
+    input_mapping:
+      bbl-config: relint-envs
+      bbl-state: relint-envs
+    params:
+      BBL_CONFIG_DIR: environments/test/cedric
+      BBL_ENV_NAME: cedric-windows
+      BBL_GCP_REGION: europe-west3
+      BBL_GCP_SERVICE_ACCOUNT_KEY: environments/test/cedric/cedric.key.json
+      BBL_IAAS: gcp
+      BBL_LB_CERT: environments/test/cedric/cert.pem
+      BBL_LB_KEY: environments/test/cedric/key.pem
+      BBL_STATE_DIR: environments/test/cedric
+      LB_DOMAIN: cf.cedric.env.wg-ard.ci.cloudfoundry.org
+    task: setup-infrastructure
+  - params:
+      release: windows-pool
+    put: windows-pool
+  public: true
+  serial: true
+- name: update-infrastructure-windows
+  plan:
+  - do:
+    - in_parallel:
+        steps:
+        - params:
+            acquire: true
+          put: windows-pool
+        - get: relint-envs
+        - get: cf-deployment-concourse-tasks
+        - get: every-tuesday-morning
+          trigger: true
+    - ensure:
+        params:
+          rebase: true
+          repository: updated-bbl-state
+        put: relint-envs
+      file: cf-deployment-concourse-tasks/bbl-up/task.yml
+      input_mapping:
+        bbl-config: relint-envs
+        bbl-state: relint-envs
+      params:
+        BBL_CONFIG_DIR: environments/test/cedric
+        BBL_ENV_NAME: cedric-windows
+        BBL_GCP_REGION: europe-west3
+        BBL_GCP_SERVICE_ACCOUNT_KEY: environments/test/cedric/cedric.key.json
+        BBL_IAAS: gcp
+        BBL_LB_CERT: environments/test/cedric/cert.pem
+        BBL_LB_KEY: environments/test/cedric/key.pem
+        BBL_STATE_DIR: environments/test/cedric
+        LB_DOMAIN: cf.cedric.env.wg-ard.ci.cloudfoundry.org
+      task: update-infrastructure
+    - params:
+        release: windows-pool
+      put: windows-pool
+    timeout: 12h
+  public: true
+  serial: true
+- name: destroy-infrastructure-windows
+  plan:
+  - in_parallel:
+      steps:
+      - params:
+          claim: cedric
+        put: windows-pool
+      - get: relint-envs
+      - get: cf-deployment-concourse-tasks
+  - file: cf-deployment-concourse-tasks/bosh-delete-deployment/task.yml
+    input_mapping:
+      bbl-state: relint-envs
+    params:
+      BBL_STATE_DIR: environments/test/cedric
+    task: guarantee-no-existing-cf-deployment
+  - ensure:
+      params:
+        rebase: true
+        repository: updated-bbl-state
+      put: relint-envs
+    file: cf-deployment-concourse-tasks/bbl-destroy/task.yml
+    input_mapping:
+      bbl-state: relint-envs
+    params:
+      BBL_GCP_SERVICE_ACCOUNT_KEY: environments/test/cedric/cedric.key.json
+      BBL_STATE_DIR: environments/test/cedric
+    task: destroy-infrastructure
+  public: true
+  serial: true
+- name: remove-claimed-lock-windows
+  plan:
+  - get: runtime-ci
+  - get: windows-pool
+    passed:
+    - destroy-infrastructure-windows
+    trigger: true
+  - file: runtime-ci/tasks/prepare-to-modify-pool-resource/task.yml
+    output_mapping:
+      pool-resource: windows-pool
+    params:
+      NAME: cedric
+    task: prepare-to-modify-pool-resource
+  - params:
+      remove: windows-pool
+    put: windows-pool
+  public: true
+  serial: true
+resources:
+- icon: github
+  name: bosh-bootloader
+  source:
+    branch: main
+    uri: https://github.com/cloudfoundry/bosh-bootloader
+  type: git
+- icon: github
+  name: cf-deployment-concourse-tasks
+  source:
+    uri: https://github.com/cloudfoundry/cf-deployment-concourse-tasks.git
+  type: git
+- icon: clock-outline
+  name: every-day
+  source:
+    interval: 24h
+    location: America/Los_Angeles
+    start: "4:20"
+    stop: "4:50"
+  type: time
+- icon: clock-outline
+  name: every-tuesday-morning
+  source:
+    days:
+    - Tuesday
+    interval: 24h
+    location: America/Los_Angeles
+    start: "4:20"
+    stop: "4:50"
+  type: time
+- icon: pool
+  name: windows-pool
+  source:
+    branch: main
+    pool: cf-deployment/windows
+    private_key: ((relint_ci_pools_readwrite_deploy_key.private_key))
+    uri: git@github.com:cloudfoundry/relint-ci-pools
+  type: pool
+- icon: github
+  name: relint-envs
+  source:
+    branch: main
+    private_key: ((hagrid_env_readwrite_deploy_key.private_key))
+    uri: git@github.com:cloudfoundry/relint-envs.git
+  type: git
+- icon: github
+  name: runtime-ci
+  source:
+    branch: main
+    uri: https://github.com/cloudfoundry/runtime-ci.git
+  type: git
